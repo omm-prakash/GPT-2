@@ -1,0 +1,9 @@
+# model architecture configurations
+d_model: 512
+head: 10 
+drop: 0.1
+eps: 0.000001
+N: 10
+vocab_size: 1000
+seq_len: 100
+
