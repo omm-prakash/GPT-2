@@ -1,9 +1,17 @@
-# model architecture configurations
-d_model: 512
-head: 10 
-drop: 0.1
+## model architecture configurations
+n_positions: 100
+d_model: 768
+drop: null
 eps: 0.000001
-N: 10
-vocab_size: 1000
+N: 1
+vocab_size:   50257
 seq_len: 100
+mlp_scale: 4 # 
+position_embedding_type: 'standard' # 'rotary', 'transformer'
+base: 10000 # base of angle exponent for rotary position embedding
 
+## attention configurations
+head: 12 # number of attention heads
+attention_type: 'group-query' # 'sliding-window', 'transformer'
+groups: 2 # for group-query attention
+context: 3 # for sliding-window attention
