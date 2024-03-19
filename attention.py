@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 
-
 class MultiHeadAttention(nn.Module):
         def __init__(self, d_model, head, *args, **kwargs) -> None:
                 super().__init__(*args, **kwargs)
@@ -21,7 +20,7 @@ class MultiHeadAttention(nn.Module):
 
                 return value,query,key # shape: (batch, head, seq, k_d)
 
-        def score(self,query,key,layer_past,mask):
+        def score(self,query,key,mask):
                 # k = 2 if layer_past is not None else 1
                 attention_score = torch.matmul(query, key.transpose(-1,-2))/\
                         torch.sqrt(torch.tensor(self.k_d, dtype=torch.int, requires_grad=False)) # shape: (batch, head, seq, k*seq)
@@ -50,13 +49,14 @@ class MultiHeadAttention(nn.Module):
 
                 present,key,value = MultiHeadAttention.merge_past(layer_past)
 
-                attention_score = self.score(query,key,layer_past,mask)
+                attention_score = self.score(query,key,mask)
                 out = torch.matmul(attention_score, value) # shape: (batch, head, seq, k_d)
                 # shape: (batch, head, seq, k_d) --> (batch, seq, head, k_d) --> (batch, head, d_model)
                 out = out.transpose(1,2).contiguous().view(value.shape[0], value.shape[1], self.d_model)
                 out = self.c_proj(out) # shape: (batch, seq, d_model)
                 
                 return out, present # shape: (batch, seq, d_model), (2, batch, head, seq, k_d)
+
 
 class GroupQueryAttention(nn.Module):
         def __init__(self, d_model, head, groups, *args, **kwargs) -> None:
@@ -87,11 +87,8 @@ class GroupQueryAttention(nn.Module):
                 value,query,key = self.split_heads(value,query,key) # shape: (batch, *head, seq, k_d)
                 # *head: head for query is groups*head else same
                 query = query.view(query.shape[0],self.head,self.groups,query.shape[2],self.k_d).transpose(1,2) # shape: (batch, groups, head, seq, k_d)
-                if layer_past is not None:
-                        past_key, past_value = layer_past[0], layer_past[1]  # transpose back cf below
-                        key = torch.cat((past_key, key), dim=-2) # shape: (batch, head, 2*seq, k_d)
-                        value = torch.cat((past_value, value), dim=-2) # shape: (batch, head, 2*seq, k_d)
-                present = torch.stack((key, value)) # shape: (2, batch, head, k*seq, k_d)
+
+                present,key,value = MultiHeadAttention.merge_past(layer_past)
 
                 # k = 2 if layer_past is not None else 1
                 attention_score = torch.matmul(query, key.transpose(-1,-2))/\
@@ -110,6 +107,7 @@ class GroupQueryAttention(nn.Module):
                 
                 return out, present # shape: (batch, seq, d_model), (2, batch, head, seq, k_d)
         
+
 class SlidingWindowAttention(MultiHeadAttention):
         def __init__(self, d_model, head, context, *args, **kwargs) -> None:
                 super().__init__(d_model, head, *args, **kwargs)
@@ -124,7 +122,7 @@ class SlidingWindowAttention(MultiHeadAttention):
                 present,key,value = MultiHeadAttention.merge_past(layer_past)
                 
                 mask = mask-torch.tril(mask, diagonal=-self.context)
-                attention_score = super().score(query,key,layer_past,mask)
+                attention_score = super().score(query,key,mask)
                 
                 out = torch.matmul(attention_score, value) # shape: (batch, head, seq, k_d)
                 # shape: (batch, head, seq, k_d) --> (batch, seq, head, k_d) --> (batch, head, d_model)
