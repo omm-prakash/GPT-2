@@ -1,81 +1,20 @@
 import torch
 import torch.nn as nn
+from utils import Error, load_config
+from attention import MultiHeadAttention, GroupQueryAttention, SlidingWindowAttention
+from embedding import Embedding, PositionEmbedding, TransformerPositionEmbedding, RotaryPositionEmbedding
 
-class Embedding(nn.Module):
-        def __init__(self, vocab_size, d_model, *args, **kwargs) -> None:
+
+class MLP(nn.Module):
+        def __init__(self, d_model, mlp_scale, *args, **kwargs) -> None:
                 super().__init__(*args, **kwargs)
-                self.d_model = d_model
-                self.embedding = nn.Embedding(vocab_size, d_model)
-
-        def forward(self, x):
-                x = self.embedding(x)
-                return x*torch.sqrt(torch.tensor(self.d_model, dtype=torch.int, requires_grad=False))  # shape: (batch, seq, d_model)
-
-class PositionEmbedding(nn.Module):
-        def __init__(self, seq_len, d_model, drop, *args, **kwargs) -> None:
-                super().__init__(*args, **kwargs)
-                self.seq_len = seq_len
-                self.d_model = d_model
-                self.dropout = nn.Dropout(drop)
-                
-                embedding = torch.empty(self.seq_len, self.d_model) # shape: (seq, d_model)
-                numerator = torch.arange(0, self.seq_len).unsqueeze(1) # shape: (seq, 1)
-                denominator = torch.exp(-1*torch.arange(0, self.d_model, 2, dtype=torch.float)* \
-                                        torch.log(torch.tensor(10000))/self.d_model) # shape: (d_model/2)
-
-                embedding[:,0::2] = torch.sin(numerator*denominator) # shape: (seq, d_model/2)
-                embedding[:,1::2] = torch.cos(numerator*denominator) # shape: (seq, d_model/2)
-
-                self.embedding = embedding.unsqueeze(0) # shape: (1, seq, d_model)
-                if not hasattr(self, 'embedding'):
-                        self.register_buffer('embedding', embedding)
-
-        def forward(self, x):
-                x = x+self.embedding[:, :self.seq_len, :].requires_grad_(False)
-                return self.dropout(x) # shape: (batch, seq, d_model)
-
-class MultiHeadAttention(nn.Module):
-        def __init__(self, d_model, head, drop, *args, **kwargs) -> None:
-                super().__init__(*args, **kwargs)
-                self.d_model = d_model
-                self.Wq = nn.Linear(d_model, d_model)
-                self.Wv = nn.Linear(d_model, d_model)
-                self.Wk = nn.Linear(d_model, d_model)
-                self.Wo = nn.Linear(d_model, d_model)
-                self.dropout = nn.Dropout(drop)
-                self.head = head
-
-        def forward(self, V, Q, K, mask):
-                # shape: (batch, seq, d_model)
-                value = self.Wv(V)
-                query = self.Wq(Q)
-                key = self.Wk(K)
-
-                k_d = self.d_model//self.head
-                # shape: (batch, seq, head, k_d) --> (batch, head, seq, k_d)
-                value = value.view(value.shape[0], value.shape[1], self.head, k_d).transpose(1,2)
-                query = query.view(query.shape[0], query.shape[1], self.head, k_d).transpose(1,2)
-                key = key.view(key.shape[0], key.shape[1], self.head, k_d).transpose(1,2)
-                
-                # shape: (batch, head, seq, seq)
-                map = (torch.matmul(query, key.transpose(-1,-2)))/torch.sqrt(k_d)
-                map = self.dropout(nn.functional.softmax(torch.mul(map, mask)))
-
-                # shape: (batch, head, seq, seq) --> (batch, head, seq, k_d) --> (batch, seq, head, k_d) --> (batch, head, d_model)
-                out = torch.matmul(map, value).transpose(1,2).contiguous().view(V.shape[0], V.shape[1], self.d_model)
-                
-                return self.Wo(out) # shape: (batch, seq, d_model)
-
-class FeedForward(nn.Module):
-        def __init__(self, d_model, *args, **kwargs) -> None:
-                super().__init__(*args, **kwargs)
-                self.linear1 = nn.Linear(d_model, d_model)
-                self.linear2 = nn.Linear(d_model, d_model)
+                self.c_fc = nn.Linear(d_model, mlp_scale*d_model) # same as the conv1D in OpenAI implementation
+                self.c_proj = nn.Linear(mlp_scale*d_model, d_model) # same as the conv1D by OpenAI implementation
                 self.gelu = nn.GELU()
                 
         def forward(self, x):
-                x = self.gelu(self.linear1(x))
-                return self.linear2(x) # shape: (batch, seq, d_model)
+                x = self.gelu(self.c_fc(x)) # shape: (batch, seq, mlp_scale*d_model)
+                return self.c_proj(x) # shape: (batch, seq, d_model)
 
 class LayerNorm(nn.Module):
         def __init__(self, eps=10e-8, *args, **kwargs) -> None:
@@ -89,75 +28,121 @@ class LayerNorm(nn.Module):
                 std = torch.std(x, dim=-1, keepdim=True)
                 return self.alpha*((x-mean)/(std+self.eps)) + self.bias # shape: (batch, seq, d_model)                
 
-class ResidualBlock(nn.Module):
-        def __init__(self, eps, drop, *args, **kwargs) -> None:
-                super().__init__(*args, **kwargs)
-                self.norm = LayerNorm(eps)
-                self.dropout = nn.Dropout(drop)
-        
-        def forward(self, x, sublayer):
-                return x + self.dropout(sublayer(self.norm(x))) # shape: (batch, seq, d_model)
-
-class Projection(nn.Module):
-        def __init__(self, d_model, vocab_size, *args, **kwargs) -> None:
-                super().__init__(*args, **kwargs)
-                self.linear = nn.Linear(d_model, vocab_size)
-                self.softmax = nn.LogSoftmax(dim=-1)
-        
-        def forward(self, x):
-                return self.softmax(self.linear(x)) # shape: (batch, seq, vocab_size)
-
 class DecoderBlock(nn.Module):
-        def __init__(self, d_model, head, drop, eps, *args, **kwargs) -> None:
+        def __init__(self, d_model, head, drop, eps, mlp_scale, attention_type, context, groups, *args, **kwargs) -> None:
                 super().__init__(*args, **kwargs)
-                self.attention = MultiHeadAttention(d_model, head, drop)
-                self.mlp = FeedForward(d_model)
-                self.residual1 = ResidualBlock(eps, drop)
-                self.residual2 = ResidualBlock(eps, drop)
-        
-        def forward(self, x, mask):
-                x = self.residual1(x, lambda y: self.attention(y,y,y,mask))
-                x = self.residual2(x, lambda y: self.mlp(y))
-                return x # shape: (batch, seq, d_model)
+                self.attention = get_attention(attention_type, d_model, head, context, groups)
+                self.mlp = MLP(d_model, mlp_scale)
+                self.norm = LayerNorm(eps)
+                if drop is not None:
+                        self.dropout = nn.Dropout(drop)
+                else:
+                        self.dropout = None
+
+        def forward(self, x, mask, layer_past=None):
+                hidden,present = self.attention(self.norm(x), mask, layer_past)
+                x = x + hidden
+                x = x + self.mlp(self.norm(x))
+                x = self.dropout(x) if self.dropout is not None else x
+                return x, present # shape: (batch, seq, d_model), (2, batch, head, seq, k_d)
 
 class Decoder(nn.Module):
-        def __init__(self, d_model, head, drop, eps, N, *args, **kwargs) -> None:
+        def __init__(self, d_model, head, drop, eps, N, mlp_scale, attention_type, context, groups, *args, **kwargs) -> None:
                 super().__init__(*args, **kwargs)
                 self.N = N
-                self.decoder_blocks = nn.ModuleList([DecoderBlock(d_model, head, drop, eps) for _ in range(N)])
+                self.decoder_blocks = nn.ModuleList([DecoderBlock(d_model, head, drop, eps, mlp_scale, attention_type, context, groups) for _ in range(N)])
                 
-        def forward(self, x, mask):
+        def forward(self, x, mask, layer_pasts=None):
+                presents = []
+                if layer_pasts is not None:
+                        assert len(layer_pasts)==self.N, "layer_pasts need to be same as N"
                 for i in range(self.N):
-                        x = self.decoder_blocks[i](x,mask)
-                return x # shape: (batch, seq, d_model)
+                        x, present = self.decoder_blocks[i](x,mask,layer_pasts[i])
+                        presents.append(present)
+                return x, presents # shape: (batch, seq, d_model), [ (2, batch, head, seq, k_d)*N ]
 
-class GPT_2(nn.Module):
-        def __init__(self, d_model, head, drop, eps, N, vocab_size, seq_len, *args, **kwargs) -> None:
+class Projection(nn.Module): # same as GPT2LMHead in OpenAI implementation
+        def __init__(self, d_model, vocab_size, weights, *args, **kwargs) -> None:
+                super().__init__(*args, **kwargs)
+                assert d_model==weights.shape[1], "d_model should match with 1st dimension of embedding weights"
+                assert vocab_size==weights.shape[0], "vocab_size should match with 2nd dimension of embedding weights"
+                self.linear = nn.Linear(d_model, vocab_size, bias=False)
+                self.set_embedding_weights(weights)
+        
+        def set_embedding_weights(self, weights):
+                self.linear.weight = weights
+
+        def forward(self, x):
+                return self.linear(x) # shape: (batch, seq, vocab_size)
+
+class Transformer(nn.Module): # same as GPT2Model in OpenAI implementations
+        def __init__(self, d_model, head, drop, eps, N, vocab_size, seq_len, mlp_scale, position_embedding_type, base, attention_type, context, groups, *args, **kwargs) -> None:
                 super().__init__(*args, **kwargs)
                 self.embedding = Embedding(vocab_size, d_model)
-                self.pos_embedding = PositionEmbedding(seq_len, d_model, drop)
-                self.decoder = Decoder(d_model, head, drop, eps, vocab_size, N)
+                self.pos_embedding = get_position_embedding(position_embedding_type, d_model, seq_len, base, drop)
+                self.decoder = Decoder(d_model, head, drop, eps, N, mlp_scale, attention_type, context, groups)
                 self.norm = LayerNorm(eps)
-                self.projection = Projection(d_model, vocab_size)
 
-        def forward(self, x, mask): # shape: (batch, seq, vocab_size)
+        def forward(self, mask, past=None):
                 x = self.pos_embedding(self.embedding(x)) # shape: (batch, seq, d_model)
-                x = self.decoder(x, mask) # shape: (batch, seq, d_model)
+                x, presents = self.decoder(x, mask, past) # shape: (batch, seq, d_model)
                 x = self.norm(x) # shape: (batch, seq, d_model)
+                return x, presents # shape: (batch, seq, d_model), [ (2, batch, head, seq, k_d)*N ]
+
+class GPT2(nn.Module): # same as GPT2LMHeadModel in OpenAI implementations
+        def __init__(self, d_model, head, drop, eps, N, vocab_size, seq_len, mlp_scale, position_embedding_type, base, attention_type, context, groups, *args, **kwargs) -> None:
+                super().__init__(*args, **kwargs)
+                self.transformer = Transformer(d_model, head, drop, eps, N, vocab_size, seq_len, mlp_scale, position_embedding_type, base, attention_type, context, groups)
+                self.projection = Projection(d_model, vocab_size, self.transformer.embedding.get_embedding_weight())
+
+        def forward(self, x, mask, past=None, labels=None):
+                x, presents = self.transformer(x, mask, past)
                 x = self.projection(x) # shape: (batch, seq, vocab_size)
-                return x
+
+                if labels is not None:
+                        loss_fun = nn.CrossEntropyLoss(ignore_index=-1)
+                        loss = loss_fun(x.view(-1, x.size(-1)), labels.view(-1))
+                        return loss
+                return x, presents  # shape: (batch, seq, vocab_size), [ (2, batch, head, seq, k_d)*N ]
+
+def get_attention(name, d_model, head, context, groups):
+        if name=='group-query':
+                attention = GroupQueryAttention(d_model, head, groups)
+        elif name=='sliding-window':
+                attention = SlidingWindowAttention(d_model, head, context)
+        elif name=='transformer':
+                attention = MultiHeadAttention(d_model, head)
+        else:
+                raise Error('attention type not found!!')
+        return attention
+
+def get_position_embedding(name, d_model, seq_len, base, drop):
+        if name=='standard':
+                embedding = PositionEmbedding(seq_len, d_model)
+        elif name=='rotary':
+                embedding = RotaryPositionEmbedding(d_model, seq_len, base)
+        elif name=='transformer':
+                embedding = TransformerPositionEmbedding(seq_len, d_model, drop)
+        else:
+                raise Error('position embedding type not found!!')
+        return embedding
 
 def get_gpt2(args):
-        model = GPT_2(d_model = args.d_model,
-                      head = args.head, 
-                      drop = args.drop,
-                      eps = args.eps,
-                      N = args.N,
-                      vocab_size = args.vocab_size,
-                      seq_len = args.seq_len)
+        model = GPT2(d_model = args.d_model,
+                     head = args.head, 
+                     drop = args.drop,
+                     eps = args.eps,
+                     N = args.N,
+                     vocab_size = args.vocab_size,
+                     seq_len = args.seq_len,
+                     mlp_scale = args.mlp_scale,
+                     position_embedding_type = args.position_embedding_type, 
+                     base = args.base,
+                     attention_type = args.attention_type, 
+                     context = args.context, 
+                     groups = args.groups)
         
         for param in model.parameters():
                 if param.dim()>1:
                         nn.init.xavier_normal_(param)
-
         return model
