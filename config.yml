@@ -1,14 +1,16 @@
 ## model architecture configurations
-n_positions: 100
-d_model: 768
-drop: null
-eps: 0.000001
-N: 1
-vocab_size:   50257
-seq_len: 100
-mlp_scale: 4 # 
+# n_positions: 100
+d_model: 768 # size of embedding dimension
+drop: null # if not null pass float number between 0 to 1
+eps: 0.000001 # added denominator to avoid devided by zero error
+N: 1 # number of attention modules attached 
+vocab_size: 50257 # size of word curpos 
+seq_len: 1024 # max sequence length
+mlp_scale: 4 # times the intermediate state of the MLP neural network layer
+
 position_embedding_type: 'standard' # 'rotary', 'transformer'
 base: 10000 # base of angle exponent for rotary position embedding
+
 
 ## attention configurations
 head: 12 # number of attention heads

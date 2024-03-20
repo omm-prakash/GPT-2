@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from utils import Error, load_config
+from utils import Error
 from attention import MultiHeadAttention, GroupQueryAttention, SlidingWindowAttention
 from embedding import Embedding, PositionEmbedding, TransformerPositionEmbedding, RotaryPositionEmbedding
 
@@ -17,32 +17,33 @@ class MLP(nn.Module):
                 return self.c_proj(x) # shape: (batch, seq, d_model)
 
 class LayerNorm(nn.Module):
-        def __init__(self, eps=10e-8, *args, **kwargs) -> None:
+        def __init__(self, d_model, eps=10e-8, *args, **kwargs) -> None:
                 super().__init__(*args, **kwargs)
-                self.alpha = nn.Parameter(torch.ones(1))
-                self.bias = nn.Parameter(torch.zeros(1))
+                self.weight = nn.Parameter(torch.ones(int(d_model)))
+                self.bias = nn.Parameter(torch.zeros(int(d_model)))
                 self.eps = eps
         
         def forward(self, x):
-                mean = torch.mean(x, dim=-1, keepdim=True)
-                std = torch.std(x, dim=-1, keepdim=True)
-                return self.alpha*((x-mean)/(std+self.eps)) + self.bias # shape: (batch, seq, d_model)                
+                mean = torch.mean(x, dim=-1, keepdim=True) # shape: (batch, seq, 1) 
+                std = torch.std(x, dim=-1, keepdim=True) # shape: (batch, seq, 1) 
+                return self.weight*((x-mean)/(std+self.eps)) + self.bias # shape: (batch, seq, d_model)                
 
 class DecoderBlock(nn.Module):
         def __init__(self, d_model, head, drop, eps, mlp_scale, attention_type, context, groups, *args, **kwargs) -> None:
                 super().__init__(*args, **kwargs)
-                self.attention = get_attention(attention_type, d_model, head, context, groups)
+                self.attn = get_attention(attention_type, d_model, head, context, groups)
                 self.mlp = MLP(d_model, mlp_scale)
-                self.norm = LayerNorm(eps)
+                self.ln_1 = LayerNorm(d_model, eps)
+                self.ln_2 = LayerNorm(d_model, eps)
                 if drop is not None:
                         self.dropout = nn.Dropout(drop)
                 else:
                         self.dropout = None
 
         def forward(self, x, mask, layer_past=None):
-                hidden,present = self.attention(self.norm(x), mask, layer_past)
+                hidden,present = self.attn(self.ln_1(x), mask, layer_past)
                 x = x + hidden
-                x = x + self.mlp(self.norm(x))
+                x = x + self.mlp(self.ln_2(x))
                 x = self.dropout(x) if self.dropout is not None else x
                 return x, present # shape: (batch, seq, d_model), (2, batch, head, seq, k_d)
 
@@ -67,6 +68,7 @@ class Projection(nn.Module): # same as GPT2LMHead in OpenAI implementation
                 assert d_model==weights.shape[1], "d_model should match with 1st dimension of embedding weights"
                 assert vocab_size==weights.shape[0], "vocab_size should match with 2nd dimension of embedding weights"
                 self.linear = nn.Linear(d_model, vocab_size, bias=False)
+                self.linear.weight.requires_grad = False
                 self.set_embedding_weights(weights)
         
         def set_embedding_weights(self, weights):
@@ -81,12 +83,12 @@ class Transformer(nn.Module): # same as GPT2Model in OpenAI implementations
                 self.embedding = Embedding(vocab_size, d_model)
                 self.pos_embedding = get_position_embedding(position_embedding_type, d_model, seq_len, base, drop)
                 self.decoder = Decoder(d_model, head, drop, eps, N, mlp_scale, attention_type, context, groups)
-                self.norm = LayerNorm(eps)
+                self.ln_f = LayerNorm(d_model, eps)
 
         def forward(self, mask, past=None):
                 x = self.pos_embedding(self.embedding(x)) # shape: (batch, seq, d_model)
                 x, presents = self.decoder(x, mask, past) # shape: (batch, seq, d_model)
-                x = self.norm(x) # shape: (batch, seq, d_model)
+                x = self.ln_f(x) # shape: (batch, seq, d_model)
                 return x, presents # shape: (batch, seq, d_model), [ (2, batch, head, seq, k_d)*N ]
 
 class GPT2(nn.Module): # same as GPT2LMHeadModel in OpenAI implementations

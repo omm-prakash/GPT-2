@@ -19,15 +19,16 @@ class PositionEmbedding(nn.Module):
         def __init__(self, seq_len, d_model, *args, **kwargs) -> None:
                 super().__init__(*args, **kwargs)
                 self.seq_len = seq_len
-                pos_embedding = torch.arange(0, seq_len)
-                pos_embedding = nn.Embedding(seq_len, d_model)(pos_embedding)
-                self.pos_embedding = pos_embedding.unsqueeze(0) # shape: (1, seq, d_model)
+                # pos_embedding = torch.arange(0, seq_len)
+                self.pos_embedding = nn.Embedding(seq_len, d_model)#(pos_embedding)
+                # self.pos_embedding = pos_embedding.unsqueeze(0) # shape: (1, seq, d_model)
 
-                if not hasattr(self, 'pos_embedding'):
-                        self.register_buffer('pos_embedding', pos_embedding)
+                # if not hasattr(self, 'pos_embedding'):
+                #         self.register_buffer('pos_embedding', pos_embedding)
 
         def forward(self, x):
-                x = x + self.pos_embedding[:, :self.seq_len, :].requires_grad_(False)
+                x = x + self.pos_embedding(torch.arange(0,x.size()[1])).unsqueeze(0)
+                # x = x + self.pos_embedding[:, :self.seq_len, :] #.requires_grad_(False)
                 return x # shape: (batch, seq, d_model)
 
 
@@ -71,7 +72,7 @@ class TransformerPositionEmbedding(nn.Module):
                 super().__init__(*args, **kwargs)
                 self.seq_len = seq_len
                 self.d_model = d_model
-                self.dropout = nn.Dropout(drop)
+                self.dropout = nn.Dropout(drop if drop is not None else 0)
                 
                 embedding = torch.empty(self.seq_len, self.d_model) # shape: (seq, d_model)
                 numerator = torch.arange(0, self.seq_len).unsqueeze(1) # shape: (seq, 1)
