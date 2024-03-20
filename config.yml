@@ -12,6 +12,8 @@ base: 10000 # base of angle exponent for rotary position embedding
 
 ## attention configurations
 head: 12 # number of attention heads
-attention_type: 'group-query' # 'sliding-window', 'transformer'
+attention_type: 'transformer' # 'sliding-window', 'transformer'
 groups: 2 # for group-query attention
 context: 3 # for sliding-window attention
+
+## training configurations
