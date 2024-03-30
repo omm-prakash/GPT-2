@@ -4,7 +4,15 @@ from tqdm import trange
 from gpt2.encoder import get_encoder
 from gpt2.model import triangular_mask
 
-def sample_sequence(model, length, start_token=None, batch_size=None, context=None, device='cuda', sample=True):
+def top_k_logits(logits, k):
+        if k == 0:
+                return logits
+        values, _ = torch.topk(logits, k)
+        min_values = values[:, -1]
+        return torch.where(logits < min_values, torch.ones_like(logits, dtype=logits.dtype) * -1e10, logits)
+
+def sample_sequence(model, length, start_token=None, batch_size=None, context=None, device='cuda', sample=True, temperature=1, top_k=0):
+        print(context)
         if start_token is None:
                 assert context is not None, 'Specify exactly one of start_token and context!'
                 context = torch.tensor(context, device=device, dtype=torch.long).unsqueeze(0).repeat(batch_size, 1)
@@ -17,8 +25,12 @@ def sample_sequence(model, length, start_token=None, batch_size=None, context=No
         past = None
         with torch.no_grad():
                 for __ in trange(length):
-                        mask = triangular_mask(prev.size(1))
-                        logits, past = model(prev, mask, past=past) # shape: (batch, seq, vocab_size), [ (2, batch, head, seq, k_d)*N ]
+                        # print('\noutput shape',output.shape)
+                        # mask = triangular_mask(prev.size(1))
+                        # print(past.size())
+                        logits, past = model(prev, past=past) # shape: (batch, seq, vocab_size), [ (2, batch, head, seq, k_d)*N ]
+                        logits = logits[:,-1,:] / temperature
+                        logits = top_k_logits(logits, k=top_k)
                         log_probs = torch.nn.functional.softmax(logits, dim=-1) # shape: (batch, seq, vocab_size)
                         if sample:
                                 prev = torch.multinomial(log_probs, num_samples=1)
@@ -27,7 +39,7 @@ def sample_sequence(model, length, start_token=None, batch_size=None, context=No
                         output = torch.cat((output, prev), dim=1) 
         return output
 
-def generate_text(model, args, device, text, unconditional, nsamples=1, batch_size=-1, length=-1, seed=21):
+def generate_text(model, args, device, text, unconditional, temperature=1, nsamples=1, batch_size=-1, length=-1, seed=21, top_k=0):
         if batch_size == -1:
                 batch_size = 1
         assert nsamples % batch_size == 0
@@ -53,7 +65,9 @@ def generate_text(model, args, device, text, unconditional, nsamples=1, batch_si
                                       batch_size = batch_size,
                                       context = context_tokens  if not  unconditional else None,
                                       device = device,
-                                      sample=True)
+                                      sample=True,
+                                      temperature=temperature,
+                                      top_k=top_k)
 
                 out = out[:, len(context_tokens):].tolist()
                 for i in range(batch_size):

@@ -29,9 +29,9 @@ class LayerNorm(nn.Module):
                 return self.weight*((x-mean)/(std+self.eps)) + self.bias # shape: (batch, seq, d_model)                
 
 class DecoderBlock(nn.Module):
-        def __init__(self, d_model, head, drop, eps, mlp_scale, attention_type, context, groups, *args, **kwargs) -> None:
+        def __init__(self, d_model, head, drop, eps, mlp_scale, attention_type, context, groups, seq_len, *args, **kwargs) -> None:
                 super().__init__(*args, **kwargs)
-                self.attn = get_attention(attention_type, d_model, head, context, groups)
+                self.attn = get_attention(attention_type, d_model, head, context, groups, seq_len)
                 self.mlp = MLP(d_model, mlp_scale)
                 self.ln_1 = LayerNorm(d_model, eps)
                 self.ln_2 = LayerNorm(d_model, eps)
@@ -40,25 +40,24 @@ class DecoderBlock(nn.Module):
                 else:
                         self.dropout = None
 
-        def forward(self, x, mask, layer_past=None):
-                hidden,present = self.attn(self.ln_1(x), mask, layer_past)
+        def forward(self, x, layer_past=None):
+                hidden,present = self.attn(self.ln_1(x), layer_past)
                 x = x + hidden
                 x = x + self.mlp(self.ln_2(x))
                 x = self.dropout(x) if self.dropout is not None else x
                 return x, present # shape: (batch, seq, d_model), (2, batch, head, seq, k_d)
 
 class Decoder(nn.Module):
-        def __init__(self, d_model, head, drop, eps, N, mlp_scale, attention_type, context, groups, *args, **kwargs) -> None:
+        def __init__(self, d_model, head, drop, eps, N, mlp_scale, attention_type, context, groups, seq_len, *args, **kwargs) -> None:
                 super().__init__(*args, **kwargs)
                 self.N = N
-                self.decoder_blocks = nn.ModuleList([DecoderBlock(d_model, head, drop, eps, mlp_scale, attention_type, context, groups) for _ in range(N)])
+                self.decoder_blocks = nn.ModuleList([DecoderBlock(d_model, head, drop, eps, mlp_scale, attention_type, context, groups, seq_len) for _ in range(N)])
                 
-        def forward(self, x, mask, layer_pasts=None):
+        def forward(self, x, layer_pasts=None):
                 presents = []
-                if layer_pasts is not None:
-                        assert len(layer_pasts)==self.N, "layer_pasts need to be same as N"
+                assert len(layer_pasts)==self.N, "length of layer_pasts need to be same as N"
                 for i in range(self.N):
-                        x, present = self.decoder_blocks[i](x,mask,layer_pasts[i])
+                        x, present = self.decoder_blocks[i](x,layer_pasts[i])
                         presents.append(present)
                 return x, presents # shape: (batch, seq, d_model), [ (2, batch, head, seq, k_d)*N ]
 
@@ -80,14 +79,20 @@ class Projection(nn.Module): # same as GPT2LMHead in OpenAI implementation
 class Transformer(nn.Module): # same as GPT2Model in OpenAI implementations
         def __init__(self, d_model, head, drop, eps, N, vocab_size, seq_len, mlp_scale, position_embedding_type, base, attention_type, context, groups, *args, **kwargs) -> None:
                 super().__init__(*args, **kwargs)
+                self.N = N
                 self.embedding = Embedding(vocab_size, d_model)
                 self.pos_embedding = get_position_embedding(position_embedding_type, d_model, seq_len, base, drop)
-                self.decoder = Decoder(d_model, head, drop, eps, N, mlp_scale, attention_type, context, groups)
+                self.decoder = Decoder(d_model, head, drop, eps, N, mlp_scale, attention_type, context, groups, seq_len)
                 self.ln_f = LayerNorm(d_model, eps)
 
-        def forward(self, x, mask, past=None):
-                x = self.pos_embedding(self.embedding(x)) # shape: (batch, seq, d_model)
-                x, presents = self.decoder(x, mask, past) # shape: (batch, seq, d_model)
+        def forward(self, x, past=None):
+                if past is not None:
+                        past_length = past[0][0].size(-2)
+                else:
+                        past_length = 0
+                        past = [None] * self.N
+                x = self.pos_embedding(self.embedding(x), past_length) # shape: (batch, seq, d_model)
+                x, presents = self.decoder(x, past) # shape: (batch, seq, d_model)
                 x = self.ln_f(x) # shape: (batch, seq, d_model)
                 return x, presents # shape: (batch, seq, d_model), [ (2, batch, head, seq, k_d)*N ]
 
@@ -97,19 +102,18 @@ class GPT2(nn.Module): # same as GPT2LMHeadModel in OpenAI implementations
                 self.transformer = Transformer(d_model, head, drop, eps, N, vocab_size, seq_len, mlp_scale, position_embedding_type, base, attention_type, context, groups)
                 self.projection = Projection(d_model, vocab_size, self.transformer.embedding.get_embedding_weight())
 
-        def forward(self, x, mask, past=None):
-                x, presents = self.transformer(x, mask, past)
+        def forward(self, x, past=None):
+                x, presents = self.transformer(x, past)
                 x = self.projection(x) # shape: (batch, seq, vocab_size)
-
                 return x, presents  # shape: (batch, seq, vocab_size), [ (2, batch, head, seq, k_d)*N ]
 
-def get_attention(name, d_model, head, context, groups):
+def get_attention(name, d_model, head, context, groups, seq_len):
         if name=='group-query':
                 attention = GroupQueryAttention(d_model, head, groups)
         elif name=='sliding-window':
                 attention = SlidingWindowAttention(d_model, head, context)
         elif name=='transformer':
-                attention = MultiHeadAttention(d_model, head)
+                attention = MultiHeadAttention(d_model, head, seq_len)
         else:
                 raise Error('attention type not found!!')
         return attention

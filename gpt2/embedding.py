@@ -21,8 +21,9 @@ class PositionEmbedding(nn.Module):
                 self.seq_len = seq_len
                 self.pos_embedding = nn.Embedding(seq_len, d_model)
 
-        def forward(self, x):
-                x = x + self.pos_embedding(torch.arange(0,x.size(1))).unsqueeze(0)
+        def forward(self, x, past_length):
+                pos_ids = self.pos_embedding(torch.arange(past_length,x.size(1)+past_length)).unsqueeze(0)
+                x = x + pos_ids
                 return x # shape: (batch, seq, d_model)
 
 
@@ -47,13 +48,13 @@ class RotaryPositionEmbedding(nn.Module):
                         # if not hasattr(self, 'theta_matrix'):
                         self.register_buffer('theta_matrix', theta_matrix)
 
-        def forward(self, x):
+        def forward(self, x, past_length):
                 self.compute_theta()
                 shape = x.shape
                 x = x.view(*shape[:-1],2,self.d_model//2) # shape: (batch, seq, 2, d_model//2)
                 x = x.transpose(-1,-2).unsqueeze(-2) # shape: (batch, seq, d_model//2, 1, 2)
 
-                x = torch.matmul(x, self.theta_matrix) # shape: (batch, seq, d_model//2, 1, 2)
+                x = torch.matmul(x, self.theta_matrix[past_length:x.size(1)+past_length,:,:,:]) # shape: (batch, seq, d_model//2, 1, 2)
                 x = x.squeeze(-2) # shape: (batch, seq, d_model//2, 2)
                 x = x.transpose(-1,-2).contiguous() # shape: (batch, seq, 2, d_model//2)
                 x = x.view(*shape[:-1], self.d_model) # shape: (batch, seq, d_model)
@@ -80,6 +81,6 @@ class TransformerPositionEmbedding(nn.Module):
                 if not hasattr(self, 'embedding'):
                         self.register_buffer('embedding', embedding)
 
-        def forward(self, x):
-                x = x+self.embedding[:, :x.size(1), :].requires_grad_(False)
+        def forward(self, x, past_length):
+                x = x+self.embedding[:, past_length:x.size(1)+past_length, :].requires_grad_(False)
                 return self.dropout(x) # shape: (batch, seq, d_model)
