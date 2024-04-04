@@ -13,11 +13,28 @@ base: 10000 # base of angle exponent for rotary position embedding
 
 ## attention configurations
 head: 12 # number of attention heads
-attention_type: 'transformer' # 'sliding-window', 'transformer'
+attention_type: 'transformer' # 'sliding-window', 'group-query'
 groups: 2 # for group-query attention
 context: 3 # for sliding-window attention
 
 
 ## training configurations
+lr: 0.00001 # learning rate
 batch_size: 10 # batch size for training/testing
 optimizer: 'adam' # optimizer for weight updates
+epochs: 10 # number of training epochs
+model_basename: 'gpt2' # model name
+model_folder: 'snaps'
+label_smoothing: 0 # ref: https://towardsdatascience.com/label-smoothing-make-your-model-less-over-confident-b12ea6f81a9a 
+preload: 'latest' # "latest" to start training from the latest training checkpoint, neither it will start from begining
+batch_data_while_training: True
+validation_step_while_training: False
+validation_step_frequency: 3
+
+## data
+gamma: 0.7 # Learning rate step gamma (default: 0.7)
+data_path: 'data'
+dataset_filename: 'random.txt'
+split_ratio: 0.3 # ratio of test data wrt the entire dataset
+
+
