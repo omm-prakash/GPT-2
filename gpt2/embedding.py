@@ -33,23 +33,23 @@ class RotaryPositionEmbedding(nn.Module):
                 self.d_model = d_model
                 self.seq_len = seq_len
                 self.base = base
-                self.theta_matrix = None
+                # self.theta_matrix = None
+                self.compute_theta()
 
         def compute_theta(self):
-                if self.theta_matrix is None:
-                        theta = torch.pow(self.base, -1*torch.arange(0,self.d_model,2,dtype=torch.double)/self.d_model).unsqueeze(0) # shape: (1, d_model//2)
-                        sequence = torch.arange(0,self.seq_len,dtype=torch.double).unsqueeze(-1) # shape: (seq, 1)
-                        theta = torch.matmul(sequence, theta) # shape: (seq, d_model//2)
-                        cos_theta = torch.cos(theta) # shape: (seq, d_model//2)
-                        sin_theta = torch.sin(theta) # shape: (seq, d_model//2)
-                        theta_matrix = torch.stack([torch.stack([cos_theta, -1*sin_theta], dim=-1),\
-                                                         torch.stack([sin_theta, cos_theta], dim=-1)], dim=-2) # shape: (seq, d_model//2, 2, 2)
-                        theta_matrix = theta_matrix.transpose(-1,-2) # shape: (seq, d_model//2, 2, 2)
-                        # if not hasattr(self, 'theta_matrix'):
-                        self.register_buffer('theta_matrix', theta_matrix)
+                # if self.theta_matrix is None:
+                theta = torch.pow(self.base, -1*torch.arange(0,self.d_model,2,dtype=torch.double)/self.d_model).unsqueeze(0) # shape: (1, d_model//2)
+                sequence = torch.arange(0,self.seq_len,dtype=torch.double).unsqueeze(-1) # shape: (seq, 1)
+                theta = torch.matmul(sequence, theta) # shape: (seq, d_model//2)
+                cos_theta = torch.cos(theta) # shape: (seq, d_model//2)
+                sin_theta = torch.sin(theta) # shape: (seq, d_model//2)
+                theta_matrix = torch.stack([torch.stack([cos_theta, -1*sin_theta], dim=-1),\
+                                                        torch.stack([sin_theta, cos_theta], dim=-1)], dim=-2) # shape: (seq, d_model//2, 2, 2)
+                theta_matrix = theta_matrix.transpose(-1,-2) # shape: (seq, d_model//2, 2, 2)
+
+                self.register_buffer('theta_matrix', theta_matrix.to(torch.float32))
 
         def forward(self, x, past_length):
-                self.compute_theta()
                 shape = x.shape
                 x = x.view(*shape[:-1],2,self.d_model//2) # shape: (batch, seq, 2, d_model//2)
                 x = x.transpose(-1,-2).unsqueeze(-2) # shape: (batch, seq, d_model//2, 1, 2)

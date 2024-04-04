@@ -109,9 +109,9 @@ class GPT2(nn.Module): # same as GPT2LMHeadModel in OpenAI implementations
 
 def get_attention(name, d_model, head, context, groups, seq_len):
         if name=='group-query':
-                attention = GroupQueryAttention(d_model, head, groups)
+                attention = GroupQueryAttention(d_model, head, groups, seq_len)
         elif name=='sliding-window':
-                attention = SlidingWindowAttention(d_model, head, context)
+                attention = SlidingWindowAttention(d_model, head, context, seq_len)
         elif name=='transformer':
                 attention = MultiHeadAttention(d_model, head, seq_len)
         else:

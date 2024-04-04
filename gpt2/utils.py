@@ -1,5 +1,10 @@
+import os
 import yaml
+import torch
+from pathlib import Path
 from copy import deepcopy
+from gpt2.model import get_gpt2
+import time, datetime
 
 class DictToObject:
     def __init__(self, dictionary):
@@ -54,3 +59,69 @@ def load_openai_weight(ops_state_dict, openai_state_dict, args):
     print('Done, all state loaded!!')
     return state
 
+def load_model_states(device, args, pretrained=False):
+        model = get_gpt2(args)        
+        model.to(device)
+        if not os.path.exists('assets/ops_gpt2_pretrained_states.pth'):
+                assert os.path.exists('assets/gpt2-pytorch_model.bin'), \
+                        "Download the openai gpt2 pretrained states. \nCommand: 'curl --output gpt2-pytorch_model.bin https://s3.amazonaws.com/models.huggingface.co/bert/gpt2-pytorch_model.bin'"
+                openai_state_dic = torch.load('assets/gpt2-pytorch_model.bin', map_location=device)
+                try:
+                        state_dict = load_openai_weight(model.state_dict(), openai_state_dic, args)
+                        model.load_state_dict(state_dict)
+                except:
+                        print('OpenAI pretrained states are not compatible with OPS gpt-2.')
+                torch.save(model.state_dict(), "./assets/ops_gpt2_pretrained_states.pth")
+        elif pretrained:
+                if args.position_embedding_type == 'standard' and args.attention_type == 'transformer':
+                        state_dict = torch.load('assets/ops_gpt2_pretrained_states.pth', map_location=device)
+                        model.load_state_dict(state_dict)
+                else:
+                        print('\nMismatch in selected position_emebdding or attention_type with pretrained model.')
+                        exit(1)
+        return model
+
+def get_weights_file_path(config, epoch: str):
+        model_folder = f"{config.model_folder}"
+        if not os.path.exists(model_folder):
+                os.makedirs(model_folder)
+        model_filename = f"{config.model_basename}@{epoch}.pt"
+        return str(Path('.') / model_folder / model_filename)
+
+def latest_weights_file_path(config):
+        model_folder = f"{config.model_folder}"
+        model_filename = f"{config.model_basename}*"
+        weights_files = list(Path(model_folder).glob(model_filename))
+        if len(weights_files) == 0:
+            return None
+        weights_files.sort()
+        return str(weights_files[-1])
+
+class Time():
+    def __init__(self):
+        self.begin = 0
+        self.final = 0
+    def now(self):
+        return datetime.datetime.now().strftime("%d/%m/%Y-%H:%M:%S")
+    def reset(self):
+        self.begin = time.time()
+        self.final = time.time()        
+    def start(self, message=None):
+        # if message:
+        self.message = message
+        self.begin = time.time()
+    def end(self):
+        self.final = time.time()
+        tm = float(self.final-self.begin)
+        unit = 'sec'
+        if tm > 60:
+            tm = tm/60
+            unit = 'min'
+        elif tm > 3600:
+            tm = tm/3600
+            unit = 'hr'
+        if self.message:
+            print('>> {}: Done!! Time taken: {:.4f} {}'.format(self.message, tm, unit))
+        else:
+            print('>> Done!! Time taken: {:.4f} {}'.format(tm, unit))
+        self.message = None

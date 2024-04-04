@@ -61,7 +61,7 @@ class MultiHeadAttention(nn.Module):
 
 
 class GroupQueryAttention(nn.Module):
-        def __init__(self, d_model, head, groups, *args, **kwargs) -> None:
+        def __init__(self, d_model, head, groups, seq_len, *args, **kwargs) -> None:
                 super().__init__(*args, **kwargs)
                 self.head = head
                 self.d_model = d_model
@@ -73,6 +73,7 @@ class GroupQueryAttention(nn.Module):
                 self.Wv = nn.Linear(d_model, d_model)
                 self.Wk = nn.Linear(d_model, d_model)
                 self.c_proj = nn.Linear(d_model, d_model) # same as the conv1D by OpenAI implementation
+                self.register_buffer("bias", torch.tril(torch.ones(seq_len, seq_len)).view(1, 1, seq_len, seq_len))
 
         def split_heads(self, value, query, key):
                 # shape: (batch, seq, head, k_d) --> (batch, head, seq, k_d)
@@ -90,7 +91,7 @@ class GroupQueryAttention(nn.Module):
                 # *head: head for query is groups*head else same
                 query = query.view(query.shape[0],self.head,self.groups,query.shape[2],self.k_d).transpose(1,2) # shape: (batch, groups, head, seq, k_d)
 
-                present,key,value = MultiHeadAttention.merge_past(layer_past)
+                present,key,value = MultiHeadAttention.merge_past(layer_past, key, value)
 
                 # *seq: context length + seq
                 attention_score = torch.matmul(query, key.transpose(-1,-2))/\
@@ -105,15 +106,15 @@ class GroupQueryAttention(nn.Module):
 
                 out = torch.matmul(attention_score, value) # shape: (batch, head, seq, k_d)
                 # shape: (batch, head, seq, k_d) --> (batch, seq, head, k_d) --> (batch, head, d_model)
-                out = out.transpose(1,2).contiguous().view(value.shape[0], value.shape[1], self.d_model)
+                out = out.transpose(1,2).contiguous().view(x.shape[0], x.shape[1], self.d_model)
                 out = self.c_proj(out) # shape: (batch, seq, d_model)
                 
                 return out, present # shape: (batch, seq, d_model), (2, batch, head, seq, k_d)
         
 
 class SlidingWindowAttention(MultiHeadAttention):
-        def __init__(self, d_model, head, context, *args, **kwargs) -> None:
-                super().__init__(d_model, head, *args, **kwargs)
+        def __init__(self, d_model, head, context, seq_len, *args, **kwargs) -> None:
+                super().__init__(d_model, head, seq_len, *args, **kwargs)
                 self.context = context
 
         def forward(self, x, layer_past=None):
@@ -122,17 +123,17 @@ class SlidingWindowAttention(MultiHeadAttention):
                 value,query,key = x.split(split_size=self.d_model, dim=-1) # shape: (batch, seq, d_model)
                 value,query,key = super().split_heads(value,query,key) # shape: (batch, head, seq, k_d)
                 
-                present,key,value = MultiHeadAttention.merge_past(layer_past)
+                present,key,value = MultiHeadAttention.merge_past(layer_past, key, value)
                 
-                nd, ns = attention_score.size(-2), attention_score.size(-1)
-                b = self.bias[:, :, ns-nd:ns, :ns]
-                attention_score = attention_score * b - 1e10 * (1 - b)
+                # nd, ns = attention_score.size(-2), attention_score.size(-1)
+                # b = self.bias[:, :, ns-nd:ns, :ns]
+                # attention_score = attention_score * b - 1e10 * (1 - b)
                 
                 attention_score = super().score(query,key)
                 
                 out = torch.matmul(attention_score, value) # shape: (batch, head, seq, k_d)
                 # shape: (batch, head, seq, k_d) --> (batch, seq, head, k_d) --> (batch, head, d_model)
-                out = out.transpose(1,2).contiguous().view(value.shape[0], value.shape[1], self.d_model)
+                out = out.transpose(1,2).contiguous().view(x.shape[0], x.shape[1], self.d_model)
                 out = self.c_proj(out) # shape: (batch, seq, d_model)
                 
                 return out, present # shape: (batch, seq, d_model), (2, batch, head, seq, k_d)

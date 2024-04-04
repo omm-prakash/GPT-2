@@ -2,7 +2,6 @@ import torch
 import numpy as np
 from tqdm import trange
 from gpt2.encoder import get_encoder
-from gpt2.model import triangular_mask
 
 def top_k_logits(logits, k):
         if k == 0:
@@ -12,7 +11,6 @@ def top_k_logits(logits, k):
         return torch.where(logits < min_values, torch.ones_like(logits, dtype=logits.dtype) * -1e10, logits)
 
 def sample_sequence(model, length, start_token=None, batch_size=None, context=None, device='cuda', sample=True, temperature=1, top_k=0):
-        print(context)
         if start_token is None:
                 assert context is not None, 'Specify exactly one of start_token and context!'
                 context = torch.tensor(context, device=device, dtype=torch.long).unsqueeze(0).repeat(batch_size, 1)
@@ -21,13 +19,9 @@ def sample_sequence(model, length, start_token=None, batch_size=None, context=No
                 context = torch.full((batch_size, 1), start_token, device=device, dtype=torch.long)
         prev = context
         output = context
-        print('prev shape: ', prev.size())
         past = None
         with torch.no_grad():
                 for __ in trange(length):
-                        # print('\noutput shape',output.shape)
-                        # mask = triangular_mask(prev.size(1))
-                        # print(past.size())
                         logits, past = model(prev, past=past) # shape: (batch, seq, vocab_size), [ (2, batch, head, seq, k_d)*N ]
                         logits = logits[:,-1,:] / temperature
                         logits = top_k_logits(logits, k=top_k)
@@ -53,7 +47,7 @@ def generate_text(model, args, device, text, unconditional, temperature=1, nsamp
         elif length > args.seq_len:
                 raise ValueError("Can't get samples longer than window size: %s" % args.seq_len)
         
-        print('Input text:',text)
+        print('\n>> Input text:\n',text)
         enc = get_encoder()
         context_tokens = enc.encode(text)
 
@@ -63,7 +57,7 @@ def generate_text(model, args, device, text, unconditional, temperature=1, nsamp
                 out = sample_sequence(model, length, 
                                       start_token = enc.encoder['<|endoftext|>'] if unconditional else None,
                                       batch_size = batch_size,
-                                      context = context_tokens  if not  unconditional else None,
+                                      context = context_tokens if not unconditional else None,
                                       device = device,
                                       sample=True,
                                       temperature=temperature,
@@ -73,7 +67,5 @@ def generate_text(model, args, device, text, unconditional, temperature=1, nsamp
                 for i in range(batch_size):
                         generated += 1
                         text = enc.decode(out[i])
-                        print("=" * 40 + " SAMPLE " + str(generated) + " " + "=" * 40)
-                        print(text)
-
+                        print('\n>> Responce text:\n',text)
         return 
