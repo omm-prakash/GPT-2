@@ -2,8 +2,7 @@
 Contlo On-Campus Placement Assignment: Implementation of GPT-2 Architecture
 
 ## Description
-GPT-2, short for "Generative Pre-trained Transformer 2," is a state-of-the-art natural language processing (NLP) model developed by OpenAI. This repository provide a simplified code for the GPT-2 architecture, modifications and with large scale training stategy. The [Contlo Placement Assigment](https://contlo.notion.site/Assignment-32610c8f37dd4435b1f97ecaff93bdaf) provided taks to develope the architecture along with modification. The code focused on understanding the Transformer architecture, modifying its structures for improved performance, and implementing efficient training loops suitable for distributed training across multiple GPUs.
-
+GPT-2, short for "Generative Pre-trained Transformer 2," is a state-of-the-art natural language processing (NLP) model developed by OpenAI. This repository provide a simplified code for the GPT-2 architecture, modifications and with large scale training stategy. The [Contlo Placement Assignment](https://contlo.notion.site/Assignment-32610c8f37dd4435b1f97ecaff93bdaf) provided task to develope the architecture along with modification. The code focused on understanding the Transformer architecture, modifying its structures for improved performance, and implementing efficient training loops suitable for distributed training across multiple GPUs. The tasks are described as follows:
 
 ### 1 | GPT-2 Model & Checkpoints
 Implement the `GPT2-small` model (with 125 million parameters) using Python and PyTorch. Touch upon the key aspects of the model like multi-head self-attention mechanism, feed-forward networks and positional encoding.
@@ -15,7 +14,7 @@ Key points:
 
 To validate your implementation, load the original GPT-2 125M model checkpoints and run a sample prediction.
 
-### 2 | Transformer Architectural Changes (40 Points)
+### 2 | Transformer Architectural Changes
 Add alterations to the original GPT-2 model architecture to experiment and assess the potential of improvements. Here's what you need to do:
 
 - **Rotary Positional Embedding:** Replace the original positional embeddings in the GPT-2 model with Rotary embeddings. You may refer to [Su et. al. RoFormer](https://arxiv.org/pdf/2104.09864.pdf).
@@ -23,7 +22,7 @@ Add alterations to the original GPT-2 model architecture to experiment and asses
 - **Sliding Window Attention:** Imbibe the Sliding Window Attention mechanism in your model and observe its effects on model performance. Refer to the work by [Beltagy et. al. Longformer](https://arxiv.org/pdf/2004.05150v2.pdf) for better comprehension of its implementation and advantages.
 
 
-## 3 | Training Loop Implementation (40 Points)
+## 3 | Training Loop Implementation
 Finally, create a training loop considering these following requirements:
 
 1. **Single GPU Training Loop:** Your base implementation should be equipped to train your model on a single GPU setup.
@@ -37,8 +36,8 @@ To ensure a consistent environment, it is recommended to use conda for managing 
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/omm-prakash/MemesNet.git
-   cd MemesNet
+   git clone https://github.com/omm-prakash/GPT-2.git
+   cd GPT-2
    ```
 
 2. Create conda environment:
@@ -53,10 +52,11 @@ To ensure a consistent environment, it is recommended to use conda for managing 
 
 4. Create directoris:
    ```bash
-        mkdir data assets
+        mkdir data assets data
+        curl --output gpt2-pytorch_model.bin https://s3.amazonaws.com/models.huggingface.co/bert/gpt2-pytorch_model.bin && mv gpt2-pytorch_model.bin ./assets/
    ```
 
-### Dataset Download
+<!-- ### Dataset Download
 Download the dataset from [Hateful Memes Challenge](https://hatefulmemeschallenge.com/#download) and follow the steps below to organize your project structure:
 
 1. Move to the `data` directory from the project root:
@@ -70,68 +70,45 @@ Download the dataset from [Hateful Memes Challenge](https://hatefulmemeschalleng
    ```bash
    cd ..
    unzip data/your-dataset.zip -d data/
-   ```
+   ``` -->
 
-Now the environment is set up, and the dataset is ready for use in the project.
+<!-- Now the environment is set up, and the dataset is ready for use in the project. -->
 
 ### Usage
 
-#### 1. Object Detection
+#### 1. main.py
 
-To perform object detection on images using YOLO (You Only Look Once) model, run the following command:
+To use the proposed GPT-2 architecture using the below arguments while for `python main.py`.  
 
-```bash
-python object_detection.py \
-  --directory ./data/hateful_memes/img/ \
-  --file <path_to_image_file> \
-  --pick_random <True/False> \
-  --plot <True/False> \
-  --config data/yolov3.cfg \
-  --weight data/yolov3.weights \
-  --classes data/coco.names
-```
 
-- `--directory`: Path of the folder containing all images.
-- `--file`: Image file path (optional, if not using random image).
-- `--pick_random`: Select a random image for detection (default: True).
-- `--plot`: Show the image with detected objects (default: True).
-- `--config`: Path for YOLO model configuration file (default: data/yolov3.cfg).
-- `--weight`: Path for YOLO model weight file (default: data/yolov3.weights).
-- `--classes`: Path for COCO class name file (default: data/coco.names).
+- `--text`: Input text, required.
+- `--nsamples`: Number of samples, default value is 1.
+- `--unconditional`: If true, unconditional generation. Default is false.
+- `--temperature`: Temperature for sampling, default value is 0.7.
+- `--batch_size`: Batch size for generation, default value is -1.
+- `--length`: Length of generated text, default value is -1.
+- `--config`: Path to config file, default value is 'config.yml'.
+- `--top_k`: Value for top-k sampling, default value is 40.
+- `--load_pretrained`: If true, load pretrained model. Default is false.
 
-#### 2. Optical Character Recognition (OCR)
+#### 2. train.py
 
-To extract text from images using OCR, use the following command:
+To start training the model on a text corpus, by using below arguments. 
 
-```bash
-python ocr.py \
-  --directory ./data/hateful_memes/img/ \
-  --file <path_to_image_file> \
-  --draw_anno <True/False> \
-  --pick_random <True/False> \
-  --plot <True/False>
-```
+- `--config`: Path to configuration file, default value is 'config.yml'.
+- `--load_pretrained`: If true, load pretrained model. Default is false.
+- `--data_path`: Path to data file, default value is 'data/data.txt'.
+- `--fsdp`: If true, use FSDP (Fully Sharded Data Parallelism). Default is false.
+- `--dpp`: If true, use DPP (Data Parallelism Pipeline). Default is false.
+- `--seed`: Random seed, default value is 1.
 
-- `--directory`: Path of the folder containing all images.
-- `--file`: Image file path (optional, if not using random image).
-- `--draw_anno`: Draw annotations on the image (default: False).
-- `--pick_random`: Select a random image for OCR (default: True).
-- `--plot`: Show the image with extracted text (default: True).
-
-#### 3. Training
-
-To initiate the training process with a modified configuration in `config.yml,` execute the following command:
-
-```bash
-python train.py
-```
 Ensure that you have updated the necessary configurations in the `config.yml` file before starting the training process.
 
 ## License
 The project has not been licensed till now.
 
 ## Acknowledgements
-The cross-modality encoder part is referred from [LXMERT](https://arxiv.org/abs/1908.07490). 
+The gpt2 is referred from [GPT-2](https://d4mucfpksywv.cloudfront.net/better-language-models/language_models_are_unsupervised_multitask_learners.pdf). 
 
 ## Contact
-Please contact me at ommprakash.sahoo.eee20@iitbhu.ac.in for any query related to the code.
+Please contact me at ommprakash.sahoo.eee20@iitbhu.ac.in or ommprakash2568@gmail.com for any query related to the code.
